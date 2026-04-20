@@ -8,7 +8,85 @@ from docx import Document
 import os
 
 # ---------- 页面配置 ----------
-st.set_page_config(page_title="智能文档问答助手", page_icon="📚", layout="wide")
+st.set_page_config(page_title="智能问答助手", page_icon="💬", layout="wide")
+
+# ---------- 自定义紫色样式 ----------
+st.markdown("""
+<style>
+    .stApp {
+        background: linear-gradient(135deg, #f5f7fa 0%, #e9eff5 100%);
+    }
+    h1 {
+        font-size: 2.5rem !important;
+        font-weight: 700 !important;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0.5rem !important;
+    }
+    .stButton > button {
+        background-color: #3b82f6;
+        color: white;
+        border-radius: 0.375rem;
+        border: none;
+        padding: 0.5rem 0.75rem;
+        font-weight: 500;
+        font-size: 0.9rem;
+        transition: all 0.2s;
+        width: 100%;
+    }
+    .stButton > button:hover {
+        background-color: #2563eb;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+    }
+    .stTextInput > div > div > input {
+        border-radius: 0.5rem;
+        border: 1px solid #d1d5db;
+        padding: 0.75rem 1rem;
+        font-size: 1rem;
+    }
+    .stTextInput > div > div > input:focus {
+        border-color: #6366f1;
+        box-shadow: 0 0 0 2px rgba(99,102,241,0.2);
+    }
+    .row-widget.stHorizontal {
+        gap: 0.5rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------- 侧边栏：个人信息 ----------
+with st.sidebar:
+    st.image("https://pic3.zhimg.com/v2-9d6e739cc0100488e3de6abb1518d46a_1440w.jpg", width=120)  # 可选头像
+    st.markdown("## 代")
+    st.markdown("**全栈开发 · AI 应用开发者**")
+    st.markdown("---")
+    
+    st.markdown("### 🛠️ 核心技术")
+    st.markdown("""
+    - Python / FastAPI / Flask
+    - TypeScript / React / Next.js
+    - Neo4j / MySQL
+    - LangChain / RAG / 大模型 API
+    """)
+    
+    st.markdown("### 📌 近期项目")
+    st.markdown("""
+    - **应急知识图谱问答系统** (毕设，已开源)
+    - **交互式数据可视化网站** (Next.js + Plotly)
+    - **RAG 文档问答助手** (本应用，智谱 GLM)
+    """)
+    
+    st.markdown("### 📫 联系")
+    st.markdown("""
+    - GitHub: [github.com/yourname](https://github.com/artist1016)
+    - Email: 1137251662@qq.com@example.com
+    """)
+    
+    st.markdown("---")
+    st.caption("© 2026 Dai | RAG Demo Powered by Zhipu AI")
+
 
 # ---------- 读取 API Key ----------
 try:
@@ -17,10 +95,15 @@ try:
 except ImportError:
     pass
 
-if hasattr(st, 'secrets') and 'ZHIPU_API_KEY' in st.secrets:
-    ZHIPU_API_KEY = st.secrets['ZHIPU_API_KEY']
-else:
-    ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
+# 优先从环境变量读取（包括 .env 和 Streamlit Cloud 的 secrets 注入）
+ZHIPU_API_KEY = os.getenv('ZHIPU_API_KEY')
+
+# 如果没有，尝试从 st.secrets 读取（兼容旧方式）
+if not ZHIPU_API_KEY:
+    try:
+        ZHIPU_API_KEY = st.secrets.get('ZHIPU_API_KEY')
+    except Exception:
+        pass
 
 if not ZHIPU_API_KEY:
     st.error("未找到 ZHIPU_API_KEY，请在 .env 文件或 Streamlit secrets 中配置")
@@ -29,140 +112,84 @@ if not ZHIPU_API_KEY:
 ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 ZHIPU_EMBEDDING_URL = "https://open.bigmodel.cn/api/paas/v4/embeddings"
 
-# ---------- 文本分块 ----------
-def split_text(text, chunk_size=500, overlap=50):
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), chunk_size - overlap):
-        chunk = " ".join(words[i:i+chunk_size])
-        chunks.append(chunk)
-    return chunks
-
-# ---------- 获取 embedding ----------
-def get_embedding(text):
-    headers = {"Authorization": f"Bearer {ZHIPU_API_KEY}", "Content-Type": "application/json"}
-    payload = {"model": "embedding-2", "input": text}
-    response = requests.post(ZHIPU_EMBEDDING_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        return response.json()["data"][0]["embedding"]
-    else:
-        st.error(f"Embedding API 错误: {response.text}")
-        return None
-
-# ---------- 余弦相似度 ----------
-def cosine_similarity(a, b):
-    dot_product = sum(x*y for x,y in zip(a,b))
-    norm_a = math.sqrt(sum(x*x for x in a))
-    norm_b = math.sqrt(sum(y*y for y in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0
-    return dot_product / (norm_a * norm_b)
-
 # ---------- 调用 LLM ----------
-def ask_llm(prompt):
+def ask_llm(prompt, system_prompt=None):
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
     headers = {"Authorization": f"Bearer {ZHIPU_API_KEY}", "Content-Type": "application/json"}
-    payload = {"model": "glm-4-flash", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    payload = {"model": "glm-4-flash", "messages": messages, "temperature": 0}
     response = requests.post(ZHIPU_API_URL, headers=headers, json=payload)
     if response.status_code == 200:
         return response.json()["choices"][0]["message"]["content"]
     else:
-        return f"❌ LLM 调用失败: {response.text}"
+        return f"❌ 调用失败: {response.text}"
 
-# ---------- 高亮关键词 ----------
-def highlight_keywords(text, keywords):
-    if not keywords:
-        return text
-    pattern = re.compile('|'.join(re.escape(kw) for kw in keywords), re.IGNORECASE)
-    return pattern.sub(lambda m: f'<mark style="background-color: #fde047;">{m.group(0)}</mark>', text)
+# ---------- 初始化 session_state ----------
+if 'uploaded_doc_text' not in st.session_state:
+    st.session_state.uploaded_doc_text = None
+if 'doc_name' not in st.session_state:
+    st.session_state.doc_name = None
 
-# ---------- Streamlit UI ----------
-st.title("📚 智能文档问答助手")
-st.markdown("上传 PDF 或 Word 文档，输入问题进行智能问答，也可在侧边栏搜索文档内容")
+# ---------- 主界面 ----------
+st.title("💬 智能问答助手")
+st.markdown("直接在下方输入问题，点击「搜索」获得回答；或点击「上传文档」后基于文档内容回答。")
 
-# 侧边栏：文档内搜索
-with st.sidebar:
-    st.header("🔍 文档内搜索")
-    keyword_search = st.text_input("输入关键词（多个用逗号分隔）", placeholder="例如：人工智能, 算法")
-    st.markdown("---")
-    st.caption("💡 提示：搜索会在原始文档中高亮显示匹配内容")
+# 输入框和按钮布局 - 输入框占更大比例，按钮适当变小
+col_input, col_btn1, col_btn2 = st.columns([6, 1, 1])
+with col_input:
+    question = st.text_input("", placeholder="输入你的问题...", label_visibility="collapsed", key="question_input")
+with col_btn1:
+    search_clicked = st.button("🔍 搜索", use_container_width=True)
+with col_btn2:
+    upload_clicked = st.button("📄 上传文档", use_container_width=True)
 
-# 主区域：文档上传 + 问答
-uploaded = st.file_uploader("上传文档 (PDF/Word)", type=["pdf", "docx"])
-
-if uploaded:
-    # 提取文档文本
-    with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded.name) as tmp:
-        tmp.write(uploaded.getbuffer())
-        tmp_path = tmp.name
-    full_text = ""
-    if uploaded.type == "application/pdf":
-        reader = PdfReader(tmp_path)
-        for page in reader.pages:
-            full_text += page.extract_text()
-    elif uploaded.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        doc = Document(tmp_path)
-        full_text = "\n".join([p.text for p in doc.paragraphs])
+# 处理上传文档按钮
+if upload_clicked:
+    uploaded_file = st.file_uploader("选择 PDF 或 Word 文档", type=["pdf", "docx"], key="doc_uploader")
+    if uploaded_file is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=uploaded_file.name) as tmp:
+            tmp.write(uploaded_file.getbuffer())
+            tmp_path = tmp.name
+        full_text = ""
+        if uploaded_file.type == "application/pdf":
+            reader = PdfReader(tmp_path)
+            for page in reader.pages:
+                full_text += page.extract_text()
+        elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+            doc = Document(tmp_path)
+            full_text = "\n".join([p.text for p in doc.paragraphs])
+        else:
+            st.error("不支持的文件类型")
+            st.stop()
+        if full_text.strip():
+            st.session_state.uploaded_doc_text = full_text
+            st.session_state.doc_name = uploaded_file.name
+            st.success(f"已上传文档：{uploaded_file.name}，共 {len(full_text)} 字符")
+        else:
+            st.error("文档内容为空")
     else:
-        st.error("不支持的文件类型")
-        st.stop()
-    
-    if not full_text.strip():
-        st.error("未能提取文本")
-        st.stop()
-    
-    st.info(f"文档已加载，共 {len(full_text)} 字符")
-    
-    # 文档内关键词搜索与高亮
-    if keyword_search:
-        keywords = [kw.strip() for kw in keyword_search.split(",") if kw.strip()]
-        if keywords:
-            highlighted = highlight_keywords(full_text, keywords)
-            with st.expander(f"🔎 搜索 '{keyword_search}' 的结果", expanded=True):
-                st.markdown(f'<div style="max-height: 300px; overflow-y: auto; border:1px solid #ddd; padding:10px; border-radius:10px; background-color:white;">{highlighted}</div>', unsafe_allow_html=True)
-    
-    # 文本分块
-    chunks = split_text(full_text, chunk_size=500, overlap=50)
-    
-    # 缓存 embedding 结果（基于文档名）
-    if 'chunk_embeddings' not in st.session_state or st.session_state.get('doc_id') != uploaded.name:
-        with st.spinner("建立向量索引..."):
-            chunk_embeddings = []
-            progress_bar = st.progress(0)
-            for i, chunk in enumerate(chunks):
-                emb = get_embedding(chunk)
-                if emb:
-                    chunk_embeddings.append(emb)
-                progress_bar.progress((i+1)/len(chunks))
-            progress_bar.empty()
-            st.session_state.chunk_embeddings = chunk_embeddings
-            st.session_state.chunks = chunks
-            st.session_state.doc_id = uploaded.name
-        st.success("索引完成")
-    else:
-        chunk_embeddings = st.session_state.chunk_embeddings
-        chunks = st.session_state.chunks
-    
-    # 问答输入框
-    query = st.text_input("💬 输入问题", placeholder="例如：这篇文档的核心观点是什么？")
-    
-    if query:
-        with st.spinner("检索中..."):
-            q_emb = get_embedding(query)
-            if q_emb is None:
-                st.stop()
-            similarities = [cosine_similarity(q_emb, ce) for ce in chunk_embeddings]
-            best_idx = max(range(len(similarities)), key=lambda i: similarities[i])
-            best_chunk = chunks[best_idx]
-            score = similarities[best_idx]
-        
-        st.markdown(f"**最相关片段** (相似度 {score:.2%})")
-        st.write(best_chunk)
-        
-        with st.spinner("生成回答..."):
-            prompt = f"根据以下内容回答问题：\n\n{best_chunk}\n\n问题：{query}\n\n回答："
+        st.info("请选择一个文档")
+
+# 显示已上传文档信息
+if st.session_state.uploaded_doc_text:
+    st.info(f"📄 当前已加载文档：{st.session_state.doc_name}，可直接提问")
+
+# 处理搜索按钮
+if search_clicked and question:
+    if st.session_state.uploaded_doc_text:
+        doc_text = st.session_state.uploaded_doc_text
+        if len(doc_text) > 20000:
+            doc_text = doc_text[:20000]
+            st.warning("文档较长，仅使用前 20000 字符")
+        with st.spinner("AI 正在阅读文档并思考..."):
+            prompt = f"请根据以下文档内容回答问题：\n\n{doc_text}\n\n问题：{question}\n\n回答："
             answer = ask_llm(prompt)
-        st.markdown("### 🤖 回答")
-        st.write(answer)
-
-else:
-    st.info("请先上传 PDF 或 Word 文档")
+    else:
+        with st.spinner("AI 思考中..."):
+            answer = ask_llm(question)
+    st.markdown("### 🤖 回答")
+    st.write(answer)
+elif search_clicked and not question:
+    st.warning("请输入问题")
